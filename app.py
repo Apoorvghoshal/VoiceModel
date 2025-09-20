@@ -86,14 +86,103 @@
 
 #////////// Code to connect model with voice input ///////////////
 
+# from flask import Flask, request, Response
+# import os, requests
+
+# app = Flask(__name__)
+
+# @app.route("/voice", methods=['POST'])
+# def voice():
+#     # Ask caller for speech input
+#     twiml = """
+#     <Response>
+#         <Gather input="speech" action="/gather" method="POST" timeout="5">
+#             <Say>Hello! Please say something after the beep.</Say>
+#         </Gather>
+#         <Say>No speech detected. Goodbye!</Say>
+#     </Response>
+#     """
+#     return Response(twiml, mimetype='text/xml')
+
+
+# @app.route("/gather", methods=['POST'])
+# def gather():
+#     speech = request.form.get("SpeechResult", "")
+#     print("Recognized Speech:", speech)  # log to Render
+
+#     # Default fallback
+#     message = "Sorry, I couldn't process that."
+
+#     # Get Hugging Face token
+#     hf_token = os.getenv("HF_TOKEN")
+#     if speech and hf_token:
+#         try:
+#             headers = {"Authorization": f"Bearer {hf_token}"}
+#             data = {"inputs": f"User said: {speech}. Reply politely."}
+
+#             # Send to Hugging Face API
+#             r = requests.post(
+#                 "https://huggingface.co/facebook/blenderbot-400M-distill",
+#                 headers=headers,
+#                 json=data,
+#                 timeout=10  # don't let it hang too long
+#             )
+
+#             print("HF status:", r.status_code)
+#             print("HF response:", r.text[:200])  # log first 200 chars
+
+#             if r.status_code == 200:
+#                 output = r.json()
+#                 if isinstance(output, list) and "generated_text" in output[0]:
+#                     message = output[0]["generated_text"]
+
+#         except Exception as e:
+#             print("HF API error:", e)
+
+#     # Respond back to Twilio
+#     twiml = f"""
+#     <Response>
+#         <Say>{message}</Say>
+#     </Response>
+#     """
+#     return Response(twiml, mimetype="text/xml")
+
+
+# if __name__ == "__main__":
+#     # Render expects service to bind to 0.0.0.0 and PORT env
+#     port = int(os.environ.get("PORT", 10000))
+#     app.run(host="0.0.0.0", port=port, debug=True)
+
+#//////// small chat model////////////////
+
 from flask import Flask, request, Response
 import os, requests
 
 app = Flask(__name__)
 
+# Hugging Face 90M model endpoint
+API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-90M"
+HF_TOKEN = os.getenv("HF_TOKEN")
+HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+
+def query_hf(user_text):
+    """Call Hugging Face API and return model reply"""
+    try:
+        data = {"inputs": user_text}
+        r = requests.post(API_URL, headers=HEADERS, json=data, timeout=10)
+        if r.status_code == 200:
+            output = r.json()
+            # output is a list of dicts with 'generated_text'
+            if isinstance(output, list) and "generated_text" in output[0]:
+                return output[0]["generated_text"]
+        print("HF response error:", r.status_code, r.text)
+    except Exception as e:
+        print("HF API exception:", e)
+    return "Sorry, I couldn't process that."
+
 @app.route("/voice", methods=['POST'])
 def voice():
-    # Ask caller for speech input
+    # Ask caller to speak
     twiml = """
     <Response>
         <Gather input="speech" action="/gather" method="POST" timeout="5">
@@ -104,42 +193,16 @@ def voice():
     """
     return Response(twiml, mimetype='text/xml')
 
-
 @app.route("/gather", methods=['POST'])
 def gather():
     speech = request.form.get("SpeechResult", "")
-    print("Recognized Speech:", speech)  # log to Render
+    print("Recognized Speech:", speech)
 
-    # Default fallback
-    message = "Sorry, I couldn't process that."
+    if speech:
+        message = query_hf(speech)  # get AI reply
+    else:
+        message = "I didn't catch that. Please try again."
 
-    # Get Hugging Face token
-    hf_token = os.getenv("HF_TOKEN")
-    if speech and hf_token:
-        try:
-            headers = {"Authorization": f"Bearer {hf_token}"}
-            data = {"inputs": f"User said: {speech}. Reply politely."}
-
-            # Send to Hugging Face API
-            r = requests.post(
-                "https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill",
-                headers=headers,
-                json=data,
-                timeout=10  # don't let it hang too long
-            )
-
-            print("HF status:", r.status_code)
-            print("HF response:", r.text[:200])  # log first 200 chars
-
-            if r.status_code == 200:
-                output = r.json()
-                if isinstance(output, list) and "generated_text" in output[0]:
-                    message = output[0]["generated_text"]
-
-        except Exception as e:
-            print("HF API error:", e)
-
-    # Respond back to Twilio
     twiml = f"""
     <Response>
         <Say>{message}</Say>
@@ -149,7 +212,6 @@ def gather():
 
 
 if __name__ == "__main__":
-    # Render expects service to bind to 0.0.0.0 and PORT env
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
 
