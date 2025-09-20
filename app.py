@@ -165,20 +165,23 @@ API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-90M"
 HF_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-def query_hf(user_text):
-    """Call Hugging Face API and return model reply"""
+def query_hf_chat(user_text):
+    API_URL = "https://api-inference.huggingface.co/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
+    data = {
+        "model": "HuggingFaceTB/SmolLM3-3B",
+        "messages": [{"role": "user", "content": user_text}]
+    }
     try:
-        data = {"inputs": user_text}
-        r = requests.post(API_URL, headers=HEADERS, json=data, timeout=10)
-        if r.status_code == 200:
-            output = r.json()
-            # output is a list of dicts with 'generated_text'
-            if isinstance(output, list) and "generated_text" in output[0]:
-                return output[0]["generated_text"]
-        print("HF response error:", r.status_code, r.text)
+        r = requests.post(API_URL, headers=headers, json=data, timeout=15)
+        r.raise_for_status()
+        output = r.json()
+        # The generated reply is usually in:
+        # output['choices'][0]['message']['content']
+        return output['choices'][0]['message']['content']
     except Exception as e:
-        print("HF API exception:", e)
-    return "Sorry, I couldn't process that."
+        print("HF Chat API error:", e)
+        return "Sorry, I couldn't process that."
 
 @app.route("/voice", methods=['POST'])
 def voice():
