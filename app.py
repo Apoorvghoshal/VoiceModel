@@ -86,49 +86,30 @@
 
 #////////// Code to connect model with voice input ///////////////
 
+import os
 import requests
 from flask import Flask, request, Response
+from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 
-HF_API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-small"
-HF_HEADERS = {"Authorization": "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"}  # free token from HF
+HF_TOKEN = os.getenv("HF_TOKEN")
+API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill"
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-def query_hf(payload):
-    response = requests.post(HF_API_URL, headers=HF_HEADERS, json=payload)
+def query(payload):
+    response = requests.post(API_URL, headers=headers, json=payload)
     return response.json()
 
-@app.route("/voice", methods=['POST'])
+@app.route("/voice", methods=["POST"])
 def voice():
-    twiml = """
-    <Response>
-        <Gather input="speech" action="/gather" method="POST" timeout="5">
-            <Say>Hello! How can I help you today?</Say>
-        </Gather>
-        <Say>Sorry, I didn't hear anything. Goodbye!</Say>
-    </Response>
-    """
-    return Response(twiml, mimetype='text/xml')
+    user_text = request.form.get("SpeechResult", "Hello")
+    ai_response = query({"inputs": user_text})
 
-@app.route("/gather", methods=['POST'])
-def gather():
-    user_input = request.form.get('SpeechResult', '')
+    bot_reply = ai_response[0]["generated_text"] if isinstance(ai_response, list) else "I couldn't process that."
 
-    # Call AI model
-    result = query_hf({"inputs": user_input})
-    if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-        bot_reply = result[0]["generated_text"]
-    else:
-        bot_reply = "Sorry, I didn’t understand that."
-
-    twiml = f"""
-    <Response>
-        <Say>{bot_reply}</Say>
-    </Response>
-    """
-    return Response(twiml, mimetype='text/xml')
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    resp = VoiceResponse()
+    resp.say(bot_reply, voice="alice")
+    return Response(str(resp), mimetype="application/xml")
 
 
