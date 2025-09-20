@@ -165,7 +165,7 @@ API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-90M"
 HF_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-def query_hf_chat(user_text):
+def query_hf(user_text):
     API_URL = "https://api-inference.huggingface.co/v1/chat/completions"
     headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
     data = {
