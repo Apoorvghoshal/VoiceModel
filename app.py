@@ -239,21 +239,18 @@ else:
 
 # ---------- Helper: query Gemini ----------
 def query_gemini(prompt: str) -> str:
-    """Call Gemini to generate a short reply. Returns fallback text on error."""
     if not model:
         logging.error("Gemini model not configured.")
         return "Sorry, the AI service is not available right now."
 
     try:
-        # Use generate_content (synchronous) with a simple prompt
-        resp = model.generate_content(prompt, timeout=TIMEOUT_SECONDS)
-        # response text lives on resp.text for the Python client
+        # ✅ no timeout here
+        resp = model.generate_content(prompt)
         if hasattr(resp, "text") and resp.text:
             return resp.text.strip()
-        # fallback if structure differs
         logging.info("Gemini response object: %s", resp)
         return "Sorry, I couldn't understand that."
-    except Exception as e:
+    except Exception:
         logging.exception("Gemini API error:")
         return "Sorry, I couldn't process that right now."
 
