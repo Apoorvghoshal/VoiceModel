@@ -166,21 +166,18 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 def query_hf(user_text):
-    API_URL = "https://api-inference.huggingface.co/v1/chat/completions"
+    API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-small"
     headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
-    data = {
-        "model": "HuggingFaceTB/SmolLM3-3B",
-        "messages": [{"role": "user", "content": user_text}]
-    }
+    data = {"inputs": user_text}
+
     try:
         r = requests.post(API_URL, headers=headers, json=data, timeout=15)
         r.raise_for_status()
         output = r.json()
-        # The generated reply is usually in:
-        # output['choices'][0]['message']['content']
-        return output['choices'][0]['message']['content']
+        # Hugging Face hosted API returns [{'generated_text': '...'}]
+        return output[0]['generated_text']
     except Exception as e:
-        print("HF Chat API error:", e)
+        print("HF API error:", e)
         return "Sorry, I couldn't process that."
 
 @app.route("/voice", methods=['POST'])
