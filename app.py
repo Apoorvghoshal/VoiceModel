@@ -155,61 +155,176 @@
 
 #//////// small chat model////////////////
 
-from flask import Flask, request, Response
-import os, requests
+# from flask import Flask, request, Response
+# import os, requests
 
+# app = Flask(__name__)
+
+# # Hugging Face 90M model endpoint
+# API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-90M"
+# HF_TOKEN = os.getenv("HF_TOKEN")
+# HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+
+# def query_hf(user_text):
+#     API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-small"
+#     headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
+#     data = {"inputs": user_text}
+
+#     try:
+#         r = requests.post(API_URL, headers=headers, json=data, timeout=15)
+#         r.raise_for_status()
+#         output = r.json()
+#         # Hugging Face hosted API returns [{'generated_text': '...'}]
+#         return output[0]['generated_text']
+#     except Exception as e:
+#         print("HF API error:", e)
+#         return "Sorry, I couldn't process that."
+
+# @app.route("/voice", methods=['POST'])
+# def voice():
+#     # Ask caller to speak
+#     twiml = """
+#     <Response>
+#         <Gather input="speech" action="/gather" method="POST" timeout="5">
+#             <Say>Hello! Please say something after the beep.</Say>
+#         </Gather>
+#         <Say>No speech detected. Goodbye!</Say>
+#     </Response>
+#     """
+#     return Response(twiml, mimetype='text/xml')
+
+# @app.route("/gather", methods=['POST'])
+# def gather():
+#     speech = request.form.get("SpeechResult", "")
+#     print("Recognized Speech:", speech)
+
+#     if speech:
+#         message = query_hf(speech)  # get AI reply
+#     else:
+#         message = "I didn't catch that. Please try again."
+
+#     twiml = f"""
+#     <Response>
+#         <Say>{message}</Say>
+#     </Response>
+#     """
+#     return Response(twiml, mimetype="text/xml")
+
+#////////////////// Using Gemini Model ///////////////////////
+
+import os
+import logging
+from flask import Flask, request, Response, jsonify
+import google.generativeai as genai
+from twilio.twiml.voice_response import VoiceResponse
+
+# ---------- Configuration ----------
+PORT = int(os.environ.get("PORT", 10000))
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")  # set this in Render env vars
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")  # change if needed
+TIMEOUT_SECONDS = 12  # limit how long we wait for Gemini
+
+# ---------- App & logging ----------
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# Hugging Face 90M model endpoint
-API_URL = "https://api-inference.huggingface.co/models/facebook/blenderbot-90M"
-HF_TOKEN = os.getenv("HF_TOKEN")
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+# configure Gemini only if key present
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    model = genai.GenerativeModel(MODEL_NAME)
+    logging.info("Gemini model configured.")
+else:
+    model = None
+    logging.warning("GEMINI_API_KEY not found in environment. Gemini disabled.")
 
-def query_hf(user_text):
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-small"
-    headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
-    data = {"inputs": user_text}
+# ---------- Helper: query Gemini ----------
+def query_gemini(prompt: str) -> str:
+    """Call Gemini to generate a short reply. Returns fallback text on error."""
+    if not model:
+        logging.error("Gemini model not configured.")
+        return "Sorry, the AI service is not available right now."
 
     try:
-        r = requests.post(API_URL, headers=headers, json=data, timeout=15)
-        r.raise_for_status()
-        output = r.json()
-        # Hugging Face hosted API returns [{'generated_text': '...'}]
-        return output[0]['generated_text']
+        # Use generate_content (synchronous) with a simple prompt
+        resp = model.generate_content(prompt, timeout=TIMEOUT_SECONDS)
+        # response text lives on resp.text for the Python client
+        if hasattr(resp, "text") and resp.text:
+            return resp.text.strip()
+        # fallback if structure differs
+        logging.info("Gemini response object: %s", resp)
+        return "Sorry, I couldn't understand that."
     except Exception as e:
-        print("HF API error:", e)
-        return "Sorry, I couldn't process that."
+        logging.exception("Gemini API error:")
+        return "Sorry, I couldn't process that right now."
 
-@app.route("/voice", methods=['POST'])
+# ---------- Twilio voice endpoints ----------
+@app.route("/voice", methods=["POST"])
 def voice():
-    # Ask caller to speak
-    twiml = """
-    <Response>
-        <Gather input="speech" action="/gather" method="POST" timeout="5">
-            <Say>Hello! Please say something after the beep.</Say>
-        </Gather>
-        <Say>No speech detected. Goodbye!</Say>
-    </Response>
     """
-    return Response(twiml, mimetype='text/xml')
+    Twilio inbound webhook.
+    Asks the caller to speak. Twilio will POST to /gather with SpeechResult.
+    """
+    response = VoiceResponse()
+    # gather speech (Twilio does built-in speech->text)
+    response.gather(
+        input="speech",
+        action="/gather",
+        method="POST",
+        timeout=5  # seconds to wait for speech after prompt
+    ).say("Hello. Please say something after the beep. For example: say hello or ask a question.")
+    # fallback if no input
+    response.say("No speech detected. Goodbye!")
+    return Response(str(response), mimetype="application/xml")
 
-@app.route("/gather", methods=['POST'])
+
+@app.route("/gather", methods=["POST"])
 def gather():
-    speech = request.form.get("SpeechResult", "")
-    print("Recognized Speech:", speech)
-
-    if speech:
-        message = query_hf(speech)  # get AI reply
-    else:
-        message = "I didn't catch that. Please try again."
-
-    twiml = f"""
-    <Response>
-        <Say>{message}</Say>
-    </Response>
     """
-    return Response(twiml, mimetype="text/xml")
+    Handles Twilio's POST with SpeechResult and replies via Gemini.
+    """
+    speech = request.form.get("SpeechResult", "").strip()
+    caller = request.form.get("From", "unknown")
+    logging.info("Caller %s said: %s", caller, speech)
 
+    if not speech:
+        message = "I didn't hear anything. Please try again later."
+    else:
+        # Build a concise system instruction so Gemini replies politely and short
+        prompt = f"You are a concise assistant. The user said: \"{speech}\". Reply in 1-2 short sentences."
+        message = query_gemini(prompt)
+
+    # Ensure message is safe for TwiML (avoid strange control chars)
+    safe_message = message.replace("&", "and")
+    twiml = VoiceResponse()
+    twiml.say(safe_message)
+    return Response(str(twiml), mimetype="application/xml")
+
+
+# Optional simple REST test endpoint (safe debug)
+@app.route("/ask", methods=["POST"])
+def ask():
+    """
+    JSON API for testing Gemini from curl/postman.
+    Body: {"query":"..."}
+    """
+    data = request.get_json(silent=True) or {}
+    q = data.get("query", "")
+    if not q:
+        return jsonify({"error": "No query provided"}), 400
+    ans = query_gemini(q)
+    return jsonify({"response": ans})
+
+
+# Root health check
+@app.route("/", methods=["GET"])
+def home():
+    status = {"status": "ok", "gemini_configured": model is not None}
+    return jsonify(status)
+
+
+if __name__ == "__main__":
+    # Bind to 0.0.0.0 and PORT for Render
+    app.run(host="0.0.0.0", port=PORT, debug=False)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
